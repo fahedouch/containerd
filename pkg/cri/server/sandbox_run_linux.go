@@ -41,7 +41,7 @@ func (c *criService) sandboxContainerSpec(id string, config *runtime.PodSandboxC
 	// Creates a spec Generator with the default spec.
 	// TODO(random-liu): [P1] Compare the default settings with docker and containerd default.
 	specOpts := []oci.SpecOpts{
-		customopts.WithoutRunMount,
+		oci.WithoutRunMount,
 		customopts.WithoutDefaultSecuritySettings,
 		customopts.WithRelativeRoot(relativeRootfsPath),
 		oci.WithEnv(imageConfig.Env),
@@ -170,7 +170,7 @@ func (c *criService) sandboxContainerSpecOpts(config *runtime.PodSandboxConfig, 
 	ssp := securityContext.GetSeccomp()
 	if ssp == nil {
 		ssp, err = generateSeccompSecurityProfile(
-			securityContext.GetSeccompProfilePath(), // nolint:staticcheck deprecated but we don't want to remove yet
+			securityContext.GetSeccompProfilePath(), //nolint:staticcheck // Deprecated but we don't want to remove yet
 			c.config.UnsetSeccompProfile)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to generate seccomp spec opts")

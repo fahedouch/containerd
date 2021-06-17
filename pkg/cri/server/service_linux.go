@@ -17,7 +17,8 @@
 package server
 
 import (
-	"github.com/containerd/containerd/sys"
+	"github.com/containerd/containerd/pkg/cap"
+	"github.com/containerd/containerd/pkg/userns"
 	cni "github.com/containerd/go-cni"
 	"github.com/opencontainers/selinux/go-selinux"
 	"github.com/pkg/errors"
@@ -32,7 +33,7 @@ const networkAttachCount = 2
 func (c *criService) initPlatform() error {
 	var err error
 
-	if sys.RunningInUserNS() {
+	if userns.RunningInUserNS() {
 		if !(c.config.DisableCgroup && !c.apparmorEnabled() && c.config.RestrictOOMScoreAdj) {
 			logrus.Warn("Running containerd in a user namespace typically requires disable_cgroup, disable_apparmor, restrict_oom_score_adj set to be true")
 		}
@@ -61,10 +62,17 @@ func (c *criService) initPlatform() error {
 		return errors.Wrap(err, "failed to initialize cni")
 	}
 
+	if c.allCaps == nil {
+		c.allCaps, err = cap.Current()
+		if err != nil {
+			return errors.Wrap(err, "failed to get caps")
+		}
+	}
+
 	return nil
 }
 
 // cniLoadOptions returns cni load options for the linux.
-func (c *criService) cniLoadOptions() []cni.CNIOpt {
-	return []cni.CNIOpt{cni.WithLoNetwork, cni.WithDefaultConf}
+func (c *criService) cniLoadOptions() []cni.Opt {
+	return []cni.Opt{cni.WithLoNetwork, cni.WithDefaultConf}
 }

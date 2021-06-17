@@ -108,12 +108,21 @@ func (c *criService) containerMounts(sandboxID string, config *runtime.Container
 	return mounts
 }
 
-func (c *criService) containerSpec(id string, sandboxID string, sandboxPid uint32, netNSPath string, containerName string,
-	config *runtime.ContainerConfig, sandboxConfig *runtime.PodSandboxConfig, imageConfig *imagespec.ImageConfig,
-	extraMounts []*runtime.Mount, ociRuntime config.Runtime) (_ *runtimespec.Spec, retErr error) {
-
+func (c *criService) containerSpec(
+	id string,
+	sandboxID string,
+	sandboxPid uint32,
+	netNSPath string,
+	containerName string,
+	imageName string,
+	config *runtime.ContainerConfig,
+	sandboxConfig *runtime.PodSandboxConfig,
+	imageConfig *imagespec.ImageConfig,
+	extraMounts []*runtime.Mount,
+	ociRuntime config.Runtime,
+) (_ *runtimespec.Spec, retErr error) {
 	specOpts := []oci.SpecOpts{
-		customopts.WithoutRunMount,
+		oci.WithoutRunMount,
 	}
 	// only clear the default security settings if the runtime does not have a custom
 	// base runtime spec spec.  Admins can use this functionality to define
@@ -152,7 +161,7 @@ func (c *criService) containerSpec(id string, sandboxID string, sandboxPid uint3
 
 	// Apply envs from image config first, so that envs from container config
 	// can override them.
-	env := imageConfig.Env
+	env := append([]string{}, imageConfig.Env...)
 	for _, e := range config.GetEnvs() {
 		env = append(env, e.GetKey()+"="+e.GetValue())
 	}
@@ -186,6 +195,11 @@ func (c *criService) containerSpec(id string, sandboxID string, sandboxPid uint3
 	specOpts = append(specOpts, customopts.WithMounts(c.os, config, extraMounts, mountLabel), customopts.WithRelabeledContainerMounts(mountLabel))
 
 	if !c.config.DisableProcMount {
+		// Change the default masked/readonly paths to empty slices
+		// See https://github.com/containerd/containerd/issues/5029
+		// TODO: Provide an option to set default paths to the ones in oci.populateDefaultUnixSpec()
+		specOpts = append(specOpts, oci.WithMaskedPaths([]string{}), oci.WithReadonlyPaths([]string{}))
+
 		// Apply masked paths if specified.
 		// If the container is privileged, this will be cleared later on.
 		if maskedPaths := securityContext.GetMaskedPaths(); maskedPaths != nil {
@@ -208,10 +222,12 @@ func (c *criService) containerSpec(id string, sandboxID string, sandboxPid uint3
 			specOpts = append(specOpts, oci.WithHostDevices, oci.WithAllDevicesAllowed)
 		} else {
 			// add requested devices by the config as host devices are not automatically added
-			specOpts = append(specOpts, customopts.WithDevices(c.os, config), customopts.WithCapabilities(securityContext))
+			specOpts = append(specOpts, customopts.WithDevices(c.os, config),
+				customopts.WithCapabilities(securityContext, c.allCaps))
 		}
 	} else { // not privileged
-		specOpts = append(specOpts, customopts.WithDevices(c.os, config), customopts.WithCapabilities(securityContext))
+		specOpts = append(specOpts, customopts.WithDevices(c.os, config),
+			customopts.WithCapabilities(securityContext, c.allCaps))
 	}
 
 	// Clear all ambient capabilities. The implication of non-root + caps
@@ -254,15 +270,31 @@ func (c *criService) containerSpec(id string, sandboxID string, sandboxPid uint3
 		specOpts = append(specOpts, customopts.WithAnnotation(pKey, pValue))
 	}
 
+	// Default target PID namespace is the sandbox PID.
+	targetPid := sandboxPid
+	// If the container targets another container's PID namespace,
+	// set targetPid to the PID of that container.
+	nsOpts := securityContext.GetNamespaceOptions()
+	if nsOpts.GetPid() == runtime.NamespaceMode_TARGET {
+		targetContainer, err := c.validateTargetContainer(sandboxID, nsOpts.TargetId)
+		if err != nil {
+			return nil, errors.Wrapf(err, "invalid target container")
+		}
+
+		status := targetContainer.Status.Get()
+		targetPid = status.Pid
+	}
+
 	specOpts = append(specOpts,
 		customopts.WithOOMScoreAdj(config, c.config.RestrictOOMScoreAdj),
-		customopts.WithPodNamespaces(securityContext, sandboxPid),
+		customopts.WithPodNamespaces(securityContext, sandboxPid, targetPid),
 		customopts.WithSupplementalGroups(supplementalGroups),
 		customopts.WithAnnotation(annotations.ContainerType, annotations.ContainerTypeContainer),
 		customopts.WithAnnotation(annotations.SandboxID, sandboxID),
 		customopts.WithAnnotation(annotations.SandboxNamespace, sandboxConfig.GetMetadata().GetNamespace()),
 		customopts.WithAnnotation(annotations.SandboxName, sandboxConfig.GetMetadata().GetName()),
 		customopts.WithAnnotation(annotations.ContainerName, containerName),
+		customopts.WithAnnotation(annotations.ImageName, imageName),
 	)
 	// cgroupns is used for hiding /sys/fs/cgroup from containers.
 	// For compatibility, cgroupns is not used when running in cgroup v1 mode or in privileged.
@@ -310,7 +342,7 @@ func (c *criService) containerSpecOpts(config *runtime.ContainerConfig, imageCon
 
 	asp := securityContext.GetApparmor()
 	if asp == nil {
-		asp, err = generateApparmorSecurityProfile(securityContext.GetApparmorProfile()) // nolint:staticcheck deprecated but we don't want to remove yet
+		asp, err = generateApparmorSecurityProfile(securityContext.GetApparmorProfile()) //nolint:staticcheck // Deprecated but we don't want to remove yet
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to generate apparmor spec opts")
 		}
@@ -329,7 +361,7 @@ func (c *criService) containerSpecOpts(config *runtime.ContainerConfig, imageCon
 	ssp := securityContext.GetSeccomp()
 	if ssp == nil {
 		ssp, err = generateSeccompSecurityProfile(
-			securityContext.GetSeccompProfilePath(), // nolint:staticcheck deprecated but we don't want to remove yet
+			securityContext.GetSeccompProfilePath(), //nolint:staticcheck // Deprecated but we don't want to remove yet
 			c.config.UnsetSeccompProfile)
 		if err != nil {
 			return nil, errors.Wrap(err, "failed to generate seccomp spec opts")

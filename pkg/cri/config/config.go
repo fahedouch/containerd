@@ -21,7 +21,6 @@ import (
 	"net/url"
 	"time"
 
-	"github.com/BurntSushi/toml"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/plugin"
 	"github.com/pkg/errors"
@@ -47,9 +46,11 @@ type Runtime struct {
 	// DEPRECATED: use Options instead. Remove when shim v1 is deprecated.
 	// This only works for runtime type "io.containerd.runtime.v1.linux".
 	Root string `toml:"runtime_root" json:"runtimeRoot"`
-	// Options are config options for the runtime. If options is loaded
-	// from toml config, it will be toml.Primitive.
-	Options *toml.Primitive `toml:"options" json:"options"`
+	// Options are config options for the runtime.
+	// If options is loaded from toml config, it will be map[string]interface{}.
+	// Options can be converted into toml.Tree using toml.TreeFromMap().
+	// Using options type as map[string]interface{} helps in correctly marshaling options from Go to JSON.
+	Options map[string]interface{} `toml:"options" json:"options"`
 	// PrivilegedWithoutHostDevices overloads the default behaviour for adding host devices to the
 	// runtime spec when the container is privileged. Defaults to false.
 	PrivilegedWithoutHostDevices bool `toml:"privileged_without_host_devices" json:"privileged_without_host_devices"`
@@ -145,15 +146,21 @@ type TLSConfig struct {
 
 // Registry is registry settings configured
 type Registry struct {
+	// ConfigPath is a path to the root directory containing registry-specific
+	// configurations.
+	// If ConfigPath is set, the rest of the registry specific options are ignored.
+	ConfigPath string `toml:"config_path" json:"configPath"`
 	// Mirrors are namespace to mirror mapping for all namespaces.
+	// This option will not be used when ConfigPath is provided.
+	// DEPRECATED: Use ConfigPath instead. Remove in containerd 1.7.
 	Mirrors map[string]Mirror `toml:"mirrors" json:"mirrors"`
 	// Configs are configs for each registry.
 	// The key is the domain name or IP of the registry.
+	// This option will be fully deprecated for ConfigPath in the future.
 	Configs map[string]RegistryConfig `toml:"configs" json:"configs"`
-
 	// Auths are registry endpoint to auth config mapping. The registry endpoint must
 	// be a valid url with host specified.
-	// DEPRECATED: Use Configs instead. Remove in containerd 1.4.
+	// DEPRECATED: Use ConfigPath instead. Remove in containerd 1.6.
 	Auths map[string]AuthConfig `toml:"auths" json:"auths"`
 	// Headers adds additional HTTP headers that get sent to all registries
 	Headers map[string][]string `toml:"headers" json:"headers"`
@@ -165,6 +172,8 @@ type RegistryConfig struct {
 	Auth *AuthConfig `toml:"auth" json:"auth"`
 	// TLS is a pair of CA/Cert/Key which then are used when creating the transport
 	// that communicates with the registry.
+	// This field will not be used when ConfigPath is provided.
+	// DEPRECATED: Use ConfigPath instead. Remove in containerd 1.7.
 	TLS *TLSConfig `toml:"tls" json:"tls"`
 }
 
@@ -253,6 +262,10 @@ type PluginConfig struct {
 	// isolation, security and early detection of issues in the mount configuration when using
 	// ReadOnlyRootFilesystem since containers won't silently mount a temporary volume.
 	IgnoreImageDefinedVolumes bool `toml:"ignore_image_defined_volumes" json:"ignoreImageDefinedVolumes"`
+	// NetNSMountsUnderStateDir places all mounts for network namespaces under StateDir/netns instead
+	// of being placed under the hardcoded directory /var/run/netns. Changing this setting requires
+	// that all containers are deleted.
+	NetNSMountsUnderStateDir bool `toml:"netns_mounts_under_state_dir" json:"netnsMountsUnderStateDir"`
 }
 
 // X509KeyPairStreaming contains the x509 configuration for streaming
@@ -315,7 +328,7 @@ func ValidatePluginConfig(ctx context.Context, c *PluginConfig) error {
 		return errors.New("`default_runtime_name` is empty")
 	}
 	if _, ok := c.ContainerdConfig.Runtimes[c.ContainerdConfig.DefaultRuntimeName]; !ok {
-		return errors.New("no corresponding runtime configured in `runtimes` for `default_runtime_name`")
+		return errors.Errorf("no corresponding runtime configured in `containerd.runtimes` for `containerd` `default_runtime_name = \"%s\"", c.ContainerdConfig.DefaultRuntimeName)
 	}
 
 	// Validation for deprecated runtime options.
@@ -347,6 +360,27 @@ func ValidatePluginConfig(ctx context.Context, c *PluginConfig) error {
 		}
 	}
 
+	useConfigPath := c.Registry.ConfigPath != ""
+	if len(c.Registry.Mirrors) > 0 {
+		if useConfigPath {
+			return errors.Errorf("`mirrors` cannot be set when `config_path` is provided")
+		}
+		log.G(ctx).Warning("`mirrors` is deprecated, please use `config_path` instead")
+	}
+	var hasDeprecatedTLS bool
+	for _, r := range c.Registry.Configs {
+		if r.TLS != nil {
+			hasDeprecatedTLS = true
+			break
+		}
+	}
+	if hasDeprecatedTLS {
+		if useConfigPath {
+			return errors.Errorf("`configs.tls` cannot be set when `config_path` is provided")
+		}
+		log.G(ctx).Warning("`configs.tls` is deprecated, please use `config_path` instead")
+	}
+
 	// Validation for deprecated auths options and mapping it to configs.
 	if len(c.Registry.Auths) != 0 {
 		if c.Registry.Configs == nil {
@@ -366,7 +400,7 @@ func ValidatePluginConfig(ctx context.Context, c *PluginConfig) error {
 			config.Auth = &auth
 			c.Registry.Configs[endpoint] = config
 		}
-		log.G(ctx).Warning("`auths` is deprecated, please use registry`configs` instead")
+		log.G(ctx).Warning("`auths` is deprecated, please use `configs` instead")
 	}
 
 	// Validation for stream_idle_timeout

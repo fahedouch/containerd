@@ -155,7 +155,7 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 	}
 	log.G(ctx).Debugf("Use OCI runtime %+v for sandbox %q and container %q", ociRuntime, sandboxID, id)
 
-	spec, err := c.containerSpec(id, sandboxID, sandboxPid, sandbox.NetNSPath, containerName, config, sandboxConfig,
+	spec, err := c.containerSpec(id, sandboxID, sandboxPid, sandbox.NetNSPath, containerName, containerdImage.Name(), config, sandboxConfig,
 		&image.ImageSpec.Config, append(mounts, volumeMounts...), ociRuntime)
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to generate container %q spec", id)
@@ -227,7 +227,7 @@ func (c *criService) CreateContainer(ctx context.Context, r *runtime.CreateConta
 
 	specOpts, err := c.containerSpecOpts(config, &image.ImageSpec.Config)
 	if err != nil {
-		return nil, errors.Wrap(err, "")
+		return nil, errors.Wrap(err, "failed to get container spec opts")
 	}
 
 	containerLabels := buildLabels(config.Labels, containerKindContainer)

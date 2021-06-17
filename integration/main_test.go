@@ -1,5 +1,3 @@
-// +build linux
-
 /*
    Copyright The containerd Authors.
 
@@ -25,6 +23,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -49,13 +48,11 @@ import (
 
 const (
 	timeout      = 1 * time.Minute
-	pauseImage   = "k8s.gcr.io/pause:3.2" // This is the same with default sandbox image.
 	k8sNamespace = constants.K8sContainerdNamespace
 )
 
 var (
 	runtimeService     cri.RuntimeService
-	imageService       cri.ImageManagerService
 	containerdClient   *containerd.Client
 	containerdEndpoint string
 )
@@ -64,9 +61,11 @@ var criEndpoint = flag.String("cri-endpoint", "unix:///run/containerd/containerd
 var criRoot = flag.String("cri-root", "/var/lib/containerd/io.containerd.grpc.v1.cri", "The root directory of cri plugin.")
 var runtimeHandler = flag.String("runtime-handler", "", "The runtime handler to use in the test.")
 var containerdBin = flag.String("containerd-bin", "containerd", "The containerd binary name. The name is used to restart containerd during test.")
+var imageListFile = flag.String("image-list", "", "The TOML file containing the non-default images to be used in tests.")
 
 func TestMain(m *testing.M) {
 	flag.Parse()
+	initImages(*imageListFile)
 	if err := ConnectDaemons(); err != nil {
 		logrus.WithError(err).Fatalf("Failed to connect daemons")
 	}
@@ -97,6 +96,7 @@ func ConnectDaemons() error {
 	}
 	// containerdEndpoint is the same with criEndpoint now
 	containerdEndpoint = strings.TrimPrefix(*criEndpoint, "unix://")
+	containerdEndpoint = strings.TrimPrefix(containerdEndpoint, "npipe:")
 	containerdClient, err = containerd.New(containerdEndpoint, containerd.WithDefaultNamespace(k8sNamespace))
 	if err != nil {
 		return errors.Wrap(err, "failed to connect containerd")
@@ -198,12 +198,21 @@ func WithTestAnnotations() ContainerOpts {
 }
 
 // Add container resource limits.
-func WithResources(r *runtime.LinuxContainerResources) ContainerOpts {
+func WithResources(r *runtime.LinuxContainerResources) ContainerOpts { //nolint:unused
 	return func(c *runtime.ContainerConfig) {
 		if c.Linux == nil {
 			c.Linux = &runtime.LinuxContainerConfig{}
 		}
 		c.Linux.Resources = r
+	}
+}
+
+func WithVolumeMount(hostPath, containerPath string) ContainerOpts {
+	return func(c *runtime.ContainerConfig) {
+		hostPath, _ = filepath.Abs(hostPath)
+		containerPath, _ = filepath.Abs(containerPath)
+		mount := &runtime.Mount{HostPath: hostPath, ContainerPath: containerPath}
+		c.Mounts = append(c.Mounts, mount)
 	}
 }
 
@@ -240,7 +249,7 @@ func WithLogPath(path string) ContainerOpts {
 }
 
 // WithSupplementalGroups adds supplemental groups.
-func WithSupplementalGroups(gids []int64) ContainerOpts {
+func WithSupplementalGroups(gids []int64) ContainerOpts { //nolint:unused
 	return func(c *runtime.ContainerConfig) {
 		if c.Linux == nil {
 			c.Linux = &runtime.LinuxContainerConfig{}
@@ -325,7 +334,7 @@ func KillProcess(name string) error {
 }
 
 // KillPid kills the process by pid. kill is used.
-func KillPid(pid int) error {
+func KillPid(pid int) error { //nolint:unused
 	output, err := exec.Command("kill", strconv.Itoa(pid)).CombinedOutput()
 	if err != nil {
 		return errors.Errorf("failed to kill %d - error: %v, output: %q", pid, err, output)
@@ -379,7 +388,7 @@ func CRIConfig() (*criconfig.Config, error) {
 }
 
 // SandboxInfo gets sandbox info.
-func SandboxInfo(id string) (*runtime.PodSandboxStatus, *server.SandboxInfo, error) {
+func SandboxInfo(id string) (*runtime.PodSandboxStatus, *server.SandboxInfo, error) { //nolint:unused
 	client, err := RawRuntimeClient()
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to get raw runtime client")

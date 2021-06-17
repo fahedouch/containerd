@@ -55,7 +55,7 @@ func LayerConvertFunc(ctx context.Context, cs content.Store, desc ocispec.Descri
 	}
 	defer newR.Close()
 	ref := fmt.Sprintf("convert-uncompress-from-%s", desc.Digest)
-	w, err := cs.Writer(ctx, content.WithRef(ref))
+	w, err := content.OpenWriter(ctx, cs, content.WithRef(ref))
 	if err != nil {
 		return nil, err
 	}
@@ -91,6 +91,8 @@ func LayerConvertFunc(ctx context.Context, cs content.Store, desc ocispec.Descri
 	return &newDesc, nil
 }
 
+// IsUncompressedType returns whether the provided media type is considered
+// an uncompressed layer type
 func IsUncompressedType(mt string) bool {
 	switch mt {
 	case

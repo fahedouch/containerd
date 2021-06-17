@@ -23,7 +23,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/BurntSushi/toml"
 	runhcsoptions "github.com/Microsoft/hcsshim/cmd/containerd-shim-runhcs-v1/options"
 	"github.com/containerd/containerd"
 	"github.com/containerd/containerd/containers"
@@ -33,6 +32,7 @@ import (
 	runcoptions "github.com/containerd/containerd/runtime/v2/runc/options"
 	"github.com/containerd/typeurl"
 	imagedigest "github.com/opencontainers/go-digest"
+	"github.com/pelletier/go-toml"
 	"github.com/pkg/errors"
 	"golang.org/x/net/context"
 	runtime "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
@@ -242,6 +242,30 @@ func (c *criService) ensureImageExists(ctx context.Context, ref string, config *
 	return &newImage, nil
 }
 
+// validateTargetContainer checks that a container is a valid
+// target for a container using PID NamespaceMode_TARGET.
+// The target container must be in the same sandbox and must be running.
+// Returns the target container for convenience.
+func (c *criService) validateTargetContainer(sandboxID, targetContainerID string) (containerstore.Container, error) {
+	targetContainer, err := c.containerStore.Get(targetContainerID)
+	if err != nil {
+		return containerstore.Container{}, errors.Wrapf(err, "container %q does not exist", targetContainerID)
+	}
+
+	targetSandboxID := targetContainer.Metadata.SandboxID
+	if targetSandboxID != sandboxID {
+		return containerstore.Container{},
+			errors.Errorf("container %q (sandbox %s) does not belong to sandbox %s", targetContainerID, targetSandboxID, sandboxID)
+	}
+
+	status := targetContainer.Status.Get()
+	if state := status.State(); state != runtime.ContainerState_CONTAINER_RUNNING {
+		return containerstore.Container{}, errors.Errorf("container %q is not running - in state %s", targetContainerID, state)
+	}
+
+	return targetContainer, nil
+}
+
 // isInCRIMounts checks whether a destination is in CRI mount list.
 func isInCRIMounts(dst string, mounts []*runtime.Mount) bool {
 	for _, m := range mounts {
@@ -309,8 +333,12 @@ func generateRuntimeOptions(r criconfig.Runtime, c criconfig.Config) (interface{
 			SystemdCgroup: c.SystemdCgroup,
 		}, nil
 	}
+	optionsTree, err := toml.TreeFromMap(r.Options)
+	if err != nil {
+		return nil, err
+	}
 	options := getRuntimeOptionsType(r.Type)
-	if err := toml.PrimitiveDecode(*r.Options, options); err != nil {
+	if err := optionsTree.Unmarshal(options); err != nil {
 		return nil, err
 	}
 	return options, nil

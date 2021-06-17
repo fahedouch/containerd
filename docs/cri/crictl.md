@@ -12,7 +12,7 @@ or `crictl` please make sure the issue has not already been submitted.
 If you have not already installed crictl please install the version compatible
 with the `cri` plugin you are using. If you are a user, your deployment
 should have installed crictl for you. If not, get it from your release tarball.
-If you are a developer the current version of crictl is specified [here](../hack/utils.sh).
+If you are a developer the current version of crictl is specified [here](/script/setup/critools-version).
 A helper command has been included to install the dependencies at the right version:
 ```console
 $ make install.deps
@@ -59,29 +59,29 @@ command. With the load command you inject a container image into the container
 runtime from a file. First you need to create a container image tarball. For
 example to create an image tarball for a pause container using Docker:
 ```console
-$ docker pull k8s.gcr.io/pause-amd64:3.2
-  3.2: Pulling from pause-amd64
-  67ddbfb20a22: Pull complete
-  Digest: sha256:59eec8837a4d942cc19a52b8c09ea75121acc38114a2c68b98983ce9356b8610
-  Status: Downloaded newer image for k8s.gcr.io/pause-amd64:3.2
-$ docker save k8s.gcr.io/pause-amd64:3.2 -o pause.tar
+$ docker pull k8s.gcr.io/pause:3.5
+  3.5: Pulling from pause
+  019d8da33d91: Pull complete
+  Digest: sha256:1ff6c18fbef2045af6b9c16bf034cc421a29027b800e4f9b68ae9b1cb3e9ae07
+  Status: Downloaded newer image for k8s.gcr.io/pause:3.5
+  k8s.gcr.io/pause:3.5
+$ docker save k8s.gcr.io/pause:3.5 -o pause.tar
 ```
-Then use [`ctr`](https://github.com/containerd/containerd/blob/master/docs/man/ctr.1.md)
-to load the container image into the container runtime:
+Then use `ctr` to load the container image into the container runtime:
 ```console
 # The cri plugin uses the "k8s.io" containerd namespace.
 $ sudo ctr -n=k8s.io images import pause.tar
-  Loaded image: k8s.gcr.io/pause-amd64:3.2
+  Loaded image: k8s.gcr.io/pause:3.5
 ```
 List images and inspect the pause image:
 ```console
 $ sudo crictl images
 IMAGE                       TAG                 IMAGE ID            SIZE
 docker.io/library/busybox   latest              f6e427c148a76       728kB
-k8s.gcr.io/pause-amd64      3.2                 da86e6ba6ca19       746kB
-$ sudo crictl inspecti da86e6ba6ca19
+k8s.gcr.io/pause            3.5                 ed210e3e4a5ba       683kB
+$ sudo crictl inspecti ed210e3e4a5ba
   ... displays information about the pause image.
-$ sudo crictl inspecti k8s.gcr.io/pause-amd64:3.2
+$ sudo crictl inspecti k8s.gcr.io/pause:3.5
   ... displays information about the pause image.
 ```
 
@@ -201,7 +201,7 @@ $ crictl info
       }
     },
     "streamServerPort": "10010",
-    "sandboxImage": "k8s.gcr.io/pause:3.2",
+    "sandboxImage": "k8s.gcr.io/pause:3.5",
     "statsCollectPeriod": 10,
     "containerdRootDir": "/var/lib/containerd",
     "containerdEndpoint": "unix:///run/containerd/containerd.sock",

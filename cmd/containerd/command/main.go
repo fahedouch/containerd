@@ -27,6 +27,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/containerd/containerd/defaults"
 	"github.com/containerd/containerd/errdefs"
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/mount"
@@ -80,7 +81,7 @@ can be used and modified as necessary as a custom configuration.`
 		cli.StringFlag{
 			Name:  "config,c",
 			Usage: "path to the configuration file",
-			Value: defaultConfigPath,
+			Value: filepath.Join(defaults.DefaultConfigDir, "config.toml"),
 		},
 		cli.StringFlag{
 			Name:  "log-level,l",
@@ -114,8 +115,14 @@ can be used and modified as necessary as a custom configuration.`
 			config  = defaultConfig()
 		)
 
-		if err := srvconfig.LoadConfig(context.GlobalString("config"), config); err != nil && !os.IsNotExist(err) {
-			return err
+		// Only try to load the config if it either exists, or the user explicitly
+		// told us to load this path.
+		configPath := context.GlobalString("config")
+		_, err := os.Stat(configPath)
+		if !os.IsNotExist(err) || context.GlobalIsSet("config") {
+			if err := srvconfig.LoadConfig(configPath, config); err != nil {
+				return err
+			}
 		}
 
 		// Apply flags to the config
@@ -183,7 +190,7 @@ can be used and modified as necessary as a custom configuration.`
 
 		if config.Debug.Address != "" {
 			var l net.Listener
-			if filepath.IsAbs(config.Debug.Address) {
+			if isLocalAddress(config.Debug.Address) {
 				if l, err = sys.GetLocalListener(config.Debug.Address, config.Debug.UID, config.Debug.GID); err != nil {
 					return errors.Wrapf(err, "failed to get listener for debug endpoint")
 				}

@@ -31,7 +31,7 @@ import (
 	"github.com/containerd/containerd/log/logtest"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/pkg/testutil"
-	"github.com/containerd/containerd/snapshots/overlay"
+	"github.com/containerd/containerd/snapshots/overlay/overlayutils"
 	"github.com/containerd/continuity/fs"
 	"github.com/containerd/continuity/fs/fstest"
 	"github.com/pkg/errors"
@@ -46,7 +46,7 @@ func TestOverlayApply(t *testing.T) {
 	}
 	defer os.RemoveAll(base)
 
-	if err := overlay.Supported(base); err != nil {
+	if err := overlayutils.Supported(base); err != nil {
 		t.Skipf("skipping because overlay is not supported %v", err)
 	}
 	fstest.FSSuite(t, overlayDiffApplier{
@@ -65,12 +65,12 @@ func TestOverlayApplyNoParents(t *testing.T) {
 	}
 	defer os.RemoveAll(base)
 
-	if err := overlay.Supported(base); err != nil {
+	if err := overlayutils.Supported(base); err != nil {
 		t.Skipf("skipping because overlay is not supported %v", err)
 	}
 	fstest.FSSuite(t, overlayDiffApplier{
 		tmp: base,
-		diff: func(ctx context.Context, w io.Writer, a, b string) error {
+		diff: func(ctx context.Context, w io.Writer, a, b string, _ ...WriteDiffOpt) error {
 			cw := newChangeWriter(w, b)
 			cw.addedDirs = nil
 			err := fs.Changes(ctx, a, b, cw.HandleChange)
@@ -85,7 +85,7 @@ func TestOverlayApplyNoParents(t *testing.T) {
 
 type overlayDiffApplier struct {
 	tmp  string
-	diff func(context.Context, io.Writer, string, string) error
+	diff func(context.Context, io.Writer, string, string, ...WriteDiffOpt) error
 	t    *testing.T
 }
 

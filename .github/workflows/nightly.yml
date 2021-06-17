@@ -16,9 +16,9 @@ jobs:
         working-directory: src/github.com/containerd/containerd
 
     steps:
-      - uses: actions/setup-go@v1
+      - uses: actions/setup-go@v2
         with:
-          go-version: '1.15.7'
+          go-version: '1.16.4'
 
       - uses: actions/checkout@v2
         with:
@@ -52,7 +52,11 @@ jobs:
             libseccomp-dev:amd64 \
             libseccomp-dev:arm64 \
             libseccomp-dev:s390x \
-            libseccomp-dev:ppc64el
+            libseccomp-dev:ppc64el \
+            libbtrfs-dev:amd64 \
+            libbtrfs-dev:arm64 \
+            libbtrfs-dev:s390x \
+            libbtrfs-dev:ppc64el
 
       - name: Build amd64
         env:
@@ -129,9 +133,9 @@ jobs:
         working-directory: src/github.com/containerd/containerd
 
     steps:
-      - uses: actions/setup-go@v1
+      - uses: actions/setup-go@v2
         with:
-          go-version: '1.15.7'
+          go-version: '1.16.4'
 
       - uses: actions/checkout@v2
         with:

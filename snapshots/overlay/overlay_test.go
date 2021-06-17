@@ -30,6 +30,7 @@ import (
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/pkg/testutil"
 	"github.com/containerd/containerd/snapshots"
+	"github.com/containerd/containerd/snapshots/overlay/overlayutils"
 	"github.com/containerd/containerd/snapshots/storage"
 	"github.com/containerd/containerd/snapshots/testsuite"
 )
@@ -173,12 +174,21 @@ func testOverlayOverlayMount(t *testing.T, newSnapshotter testsuite.SnapshotterF
 		upper = "upperdir=" + filepath.Join(bp, "fs")
 		lower = "lowerdir=" + getParents(ctx, o, root, "/tmp/layer2")[0]
 	)
-	for i, v := range []string{
+
+	expected := []string{
 		"index=off",
+	}
+	if userxattr, err := overlayutils.NeedsUserXAttr(root); err != nil {
+		t.Fatal(err)
+	} else if userxattr {
+		expected = append(expected, "userxattr")
+	}
+	expected = append(expected, []string{
 		work,
 		upper,
 		lower,
-	} {
+	}...)
+	for i, v := range expected {
 		if m.Options[i] != v {
 			t.Errorf("expected %q but received %q", v, m.Options[i])
 		}
@@ -335,12 +345,26 @@ func testOverlayView(t *testing.T, newSnapshotter testsuite.SnapshotterFunc) {
 	if m.Source != "overlay" {
 		t.Errorf("mount source should be overlay but received %q", m.Source)
 	}
-	if len(m.Options) != 2 {
-		t.Errorf("expected 1 additional mount option but got %d", len(m.Options))
+
+	expectedOptions := 2
+	userxattr, err := overlayutils.NeedsUserXAttr(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if userxattr {
+		expectedOptions++
+	}
+
+	if len(m.Options) != expectedOptions {
+		t.Errorf("expected %d additional mount option but got %d", expectedOptions, len(m.Options))
 	}
 	lowers := getParents(ctx, o, root, "/tmp/view2")
 	expected = fmt.Sprintf("lowerdir=%s:%s", lowers[0], lowers[1])
-	if m.Options[1] != expected {
-		t.Errorf("expected option %q but received %q", expected, m.Options[0])
+	optIdx := 1
+	if userxattr {
+		optIdx++
+	}
+	if m.Options[optIdx] != expected {
+		t.Errorf("expected option %q but received %q", expected, m.Options[optIdx])
 	}
 }

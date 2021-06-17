@@ -90,6 +90,25 @@ You can move them in your global path, `/usr/local/bin` with:
 sudo make install
 ```
 
+The install prefix can be changed by passing the `PREFIX` variable (defaults
+to `/usr/local`).
+
+Note: if you set one of these vars, set them to the same values on all make stages
+(build as well as install).
+
+If you want to prepend an additional prefix on actual installation (eg. packaging or chroot install),
+you can pass it via `DESTDIR` variable:
+
+```sudo
+sudo make install DESTDIR=/tmp/install-x973234/
+```
+
+The above command installs the `containerd` binary to `/tmp/install-x973234/usr/local/bin/containerd`
+
+The current `DESTDIR` convention is supported since containerd v1.6.
+Older releases was using `DESTDIR` for a different purpose that is similar to `PREFIX`.
+
+
 When making any changes to the gRPC API, you can use the installed `protoc`
 compiler to regenerate the API generated code packages with:
 
@@ -111,7 +130,7 @@ to use `go mod` command to modify the dependencies. After modifition, you should
 and `go mod vendor` to ensure the `go.mod`, `go.sum` files and `vendor` directory are up to date.
 Changes to these files should become a single commit for a PR which relies on vendored updates.
 
-Please refer to [RUNC.md](/RUNC.md) for the currently supported version of `runc` that is used by containerd.
+Please refer to [RUNC.md](/docs/RUNC.md) for the currently supported version of `runc` that is used by containerd.
 
 ### Static binaries
 
@@ -180,7 +199,13 @@ RUN apt-get update && \
 
 ```
 
-In our Docker container we will use a specific `runc` build which includes [seccomp](https://en.wikipedia.org/wiki/seccomp) and [apparmor](https://en.wikipedia.org/wiki/AppArmor) support. Hence why our Dockerfile includes `libseccomp-dev` as a dependency (apparmor support doesn't require external libraries). Please refer to [RUNC.md](/RUNC.md) for the currently supported version of `runc` that is used by containerd.
+In our Docker container we will build `runc` build, which includes
+[seccomp](https://en.wikipedia.org/wiki/seccomp), [SELinux](https://en.wikipedia.org/wiki/Security-Enhanced_Linux),
+and [AppArmor](https://en.wikipedia.org/wiki/AppArmor) support. Seccomp support
+in runc requires `libseccomp-dev` as a dependency (AppArmor and SELinux support
+do not require external libraries at build time). Refer to [RUNC.md](docs/RUNC.md)
+in the docs directory to for details about building runc, and to learn about
+supported versions of `runc` as used by containerd.
 
 Let's suppose you build an image called `containerd/build` from the above Dockerfile. You can run the following command:
 
@@ -209,8 +234,11 @@ Next, let's build `runc`:
 
 ```sh
 cd /go/src/github.com/opencontainers/runc
-make BUILDTAGS='seccomp apparmor selinux' && make install
+make && make install
 ```
+
+For further details about building runc, refer to [RUNC.md](docs/RUNC.md) in the
+docs directory.
 
 When working with `ctr`, the simple test client we just built, don't forget to start the daemon!
 

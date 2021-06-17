@@ -20,13 +20,15 @@ package zfs
 
 import (
 	"context"
+	"math"
+	"path/filepath"
+
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/snapshots"
 	"github.com/containerd/containerd/snapshots/storage"
 	zfs "github.com/mistifyio/go-zfs"
 	"github.com/pkg/errors"
-	"path/filepath"
 )
 
 const (
@@ -34,8 +36,10 @@ const (
 	//	active := filepath.Join(dataset.Name, id)
 	//      committed := active + "@" + snapshotSuffix
 	snapshotSuffix = "snapshot"
-)
 
+	// Using this typed MaxInt64 to prevent integer overlow on 32bit
+	maxSnapshotSize int64 = math.MaxInt64
+)
 
 type snapshotter struct {
 	dataset *zfs.Dataset
@@ -105,7 +109,7 @@ func (z *snapshotter) Stat(ctx context.Context, key string) (snapshots.Info, err
 	if err != nil {
 		return snapshots.Info{}, err
 	}
-	defer t.Rollback()
+	defer t.Rollback() //nolint:errcheck
 	_, info, _, err := storage.GetInfo(ctx, key)
 	if err != nil {
 		return snapshots.Info{}, err
@@ -116,7 +120,40 @@ func (z *snapshotter) Stat(ctx context.Context, key string) (snapshots.Info, err
 
 // Usage retrieves the disk usage of the top-level snapshot.
 func (z *snapshotter) Usage(ctx context.Context, key string) (snapshots.Usage, error) {
-	return snapshots.Usage{}, errors.New("zfs does not implement Usage() yet")
+	return z.usage(ctx, key)
+}
+
+func (z *snapshotter) usage(ctx context.Context, key string) (snapshots.Usage, error) {
+	ctx, t, err := z.ms.TransactionContext(ctx, false)
+	if err != nil {
+		return snapshots.Usage{}, err
+	}
+	id, info, usage, err := storage.GetInfo(ctx, key)
+	t.Rollback() //nolint:errcheck
+
+	if err != nil {
+		return snapshots.Usage{}, err
+	}
+
+	if info.Kind == snapshots.KindActive {
+		activeName := filepath.Join(z.dataset.Name, id)
+		sDataset, err := zfs.GetDataset(activeName)
+
+		if err != nil {
+			return snapshots.Usage{}, err
+		}
+
+		if int64(sDataset.Used) > maxSnapshotSize {
+			return snapshots.Usage{}, errors.Errorf("Dataset size exceeds maximum snapshot size of %d bytes", maxSnapshotSize)
+		}
+
+		usage = snapshots.Usage{
+			Size:   int64(sDataset.Used),
+			Inodes: -1,
+		}
+	}
+
+	return usage, nil
 }
 
 // Walk the committed snapshots.
@@ -125,7 +162,7 @@ func (z *snapshotter) Walk(ctx context.Context, fn snapshots.WalkFunc, filters .
 	if err != nil {
 		return err
 	}
-	defer t.Rollback()
+	defer t.Rollback() //nolint:errcheck
 	return storage.WalkInfo(ctx, fn, filters...)
 }
 
@@ -201,6 +238,11 @@ func (z *snapshotter) mounts(dataset *zfs.Dataset, readonly bool) ([]mount.Mount
 }
 
 func (z *snapshotter) Commit(ctx context.Context, name, key string, opts ...snapshots.Opt) (err error) {
+	usage, err := z.usage(ctx, key)
+	if err != nil {
+		return errors.Wrap(err, "failed to compute usage")
+	}
+
 	ctx, t, err := z.ms.TransactionContext(ctx, true)
 	if err != nil {
 		return err
@@ -213,7 +255,7 @@ func (z *snapshotter) Commit(ctx context.Context, name, key string, opts ...snap
 		}
 	}()
 
-	id, err := storage.CommitActive(ctx, key, name, snapshots.Usage{}, opts...)
+	id, err := storage.CommitActive(ctx, key, name, usage, opts...)
 	if err != nil {
 		return errors.Wrap(err, "failed to commit")
 	}
@@ -249,7 +291,7 @@ func (z *snapshotter) Mounts(ctx context.Context, key string) ([]mount.Mount, er
 		return nil, err
 	}
 	s, err := storage.GetSnapshot(ctx, key)
-	t.Rollback()
+	t.Rollback() //nolint:errcheck
 	if err != nil {
 		return nil, errors.Wrap(err, "failed to get active snapshot")
 	}
@@ -313,7 +355,7 @@ func (o *snapshotter) Update(ctx context.Context, info snapshots.Info, fieldpath
 
 	info, err = storage.UpdateInfo(ctx, info, fieldpaths...)
 	if err != nil {
-		t.Rollback()
+		t.Rollback() //nolint:errcheck
 		return snapshots.Info{}, err
 	}
 

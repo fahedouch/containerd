@@ -32,7 +32,6 @@ import (
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/mount"
 	"github.com/containerd/containerd/oci"
-	"github.com/opencontainers/runc/libcontainer/devices"
 	runtimespec "github.com/opencontainers/runtime-spec/specs-go"
 	"github.com/opencontainers/selinux/go-selinux/label"
 	"github.com/pkg/errors"
@@ -75,22 +74,6 @@ func mergeGids(gids1, gids2 []uint32) []uint32 {
 	}
 	sort.Slice(gids, func(i, j int) bool { return gids[i] < gids[j] })
 	return gids
-}
-
-// WithoutRunMount removes the `/run` inside the spec
-func WithoutRunMount(_ context.Context, _ oci.Client, c *containers.Container, s *runtimespec.Spec) error {
-	var (
-		mounts  []runtimespec.Mount
-		current = s.Mounts
-	)
-	for _, m := range current {
-		if filepath.Clean(m.Destination) == "/run" {
-			continue
-		}
-		mounts = append(mounts, m)
-	}
-	s.Mounts = mounts
-	return nil
 }
 
 // WithoutDefaultSecuritySettings removes the default security settings generated on a spec
@@ -302,16 +285,6 @@ func ensureSharedOrSlave(path string, lookupMount func(string) (mount.Info, erro
 	return errors.Errorf("path %q is mounted on %q but it is not a shared or slave mount", path, mountInfo.Mountpoint)
 }
 
-func addDevice(s *runtimespec.Spec, rd runtimespec.LinuxDevice) {
-	for i, dev := range s.Linux.Devices {
-		if dev.Path == rd.Path {
-			s.Linux.Devices[i] = rd
-			return
-		}
-	}
-	s.Linux.Devices = append(s.Linux.Devices, rd)
-}
-
 // WithDevices sets the provided devices onto the container spec
 func WithDevices(osi osinterface.OS, config *runtime.ContainerConfig) oci.SpecOpts {
 	return func(ctx context.Context, client oci.Client, c *containers.Container, s *runtimespec.Spec) (err error) {
@@ -321,40 +294,24 @@ func WithDevices(osi osinterface.OS, config *runtime.ContainerConfig) oci.SpecOp
 		if s.Linux.Resources == nil {
 			s.Linux.Resources = &runtimespec.LinuxResources{}
 		}
+
 		for _, device := range config.GetDevices() {
 			path, err := osi.ResolveSymbolicLink(device.HostPath)
 			if err != nil {
 				return err
 			}
-			dev, err := devices.DeviceFromPath(path, device.Permissions)
-			if err != nil {
+
+			o := oci.WithDevices(path, device.ContainerPath, device.Permissions)
+			if err := o(ctx, client, c, s); err != nil {
 				return err
 			}
-			rd := runtimespec.LinuxDevice{
-				Path:  device.ContainerPath,
-				Type:  string(dev.Type),
-				Major: dev.Major,
-				Minor: dev.Minor,
-				UID:   &dev.Uid,
-				GID:   &dev.Gid,
-			}
-
-			addDevice(s, rd)
-
-			s.Linux.Resources.Devices = append(s.Linux.Resources.Devices, runtimespec.LinuxDeviceCgroup{
-				Allow:  true,
-				Type:   string(dev.Type),
-				Major:  &dev.Major,
-				Minor:  &dev.Minor,
-				Access: string(dev.Permissions),
-			})
 		}
 		return nil
 	}
 }
 
 // WithCapabilities sets the provided capabilities from the security context
-func WithCapabilities(sc *runtime.LinuxContainerSecurityContext) oci.SpecOpts {
+func WithCapabilities(sc *runtime.LinuxContainerSecurityContext, allCaps []string) oci.SpecOpts {
 	capabilities := sc.GetCapabilities()
 	if capabilities == nil {
 		return nullOpt
@@ -366,7 +323,7 @@ func WithCapabilities(sc *runtime.LinuxContainerSecurityContext) oci.SpecOpts {
 	// AddCapabilities: []string{"ALL"}, DropCapabilities: []string{"CHOWN"}
 	// will be all capabilities without `CAP_CHOWN`.
 	if util.InStringSlice(capabilities.GetAddCapabilities(), "ALL") {
-		opts = append(opts, oci.WithAllCapabilities)
+		opts = append(opts, oci.WithCapabilities(allCaps))
 	}
 	if util.InStringSlice(capabilities.GetDropCapabilities(), "ALL") {
 		opts = append(opts, oci.WithCapabilities(nil))
@@ -636,16 +593,16 @@ func WithSupplementalGroups(groups []int64) oci.SpecOpts {
 }
 
 // WithPodNamespaces sets the pod namespaces for the container
-func WithPodNamespaces(config *runtime.LinuxContainerSecurityContext, pid uint32) oci.SpecOpts {
+func WithPodNamespaces(config *runtime.LinuxContainerSecurityContext, sandboxPid uint32, targetPid uint32) oci.SpecOpts {
 	namespaces := config.GetNamespaceOptions()
 
 	opts := []oci.SpecOpts{
-		oci.WithLinuxNamespace(runtimespec.LinuxNamespace{Type: runtimespec.NetworkNamespace, Path: GetNetworkNamespace(pid)}),
-		oci.WithLinuxNamespace(runtimespec.LinuxNamespace{Type: runtimespec.IPCNamespace, Path: GetIPCNamespace(pid)}),
-		oci.WithLinuxNamespace(runtimespec.LinuxNamespace{Type: runtimespec.UTSNamespace, Path: GetUTSNamespace(pid)}),
+		oci.WithLinuxNamespace(runtimespec.LinuxNamespace{Type: runtimespec.NetworkNamespace, Path: GetNetworkNamespace(sandboxPid)}),
+		oci.WithLinuxNamespace(runtimespec.LinuxNamespace{Type: runtimespec.IPCNamespace, Path: GetIPCNamespace(sandboxPid)}),
+		oci.WithLinuxNamespace(runtimespec.LinuxNamespace{Type: runtimespec.UTSNamespace, Path: GetUTSNamespace(sandboxPid)}),
 	}
 	if namespaces.GetPid() != runtime.NamespaceMode_CONTAINER {
-		opts = append(opts, oci.WithLinuxNamespace(runtimespec.LinuxNamespace{Type: runtimespec.PIDNamespace, Path: GetPIDNamespace(pid)}))
+		opts = append(opts, oci.WithLinuxNamespace(runtimespec.LinuxNamespace{Type: runtimespec.PIDNamespace, Path: GetPIDNamespace(targetPid)}))
 	}
 	return oci.Compose(opts...)
 }

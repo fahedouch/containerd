@@ -40,7 +40,7 @@ version = 2
   selinux_category_range = 1024
 
   # sandbox_image is the image used by sandbox container.
-  sandbox_image = "k8s.gcr.io/pause:3.2"
+  sandbox_image = "k8s.gcr.io/pause:3.5"
 
   # stats_collect_period is the period (in seconds) of snapshots stats collection.
   stats_collect_period = 10
@@ -58,6 +58,11 @@ version = 2
 	# isolation, security and early detection of issues in the mount configuration when using
 	# ReadOnlyRootFilesystem since containers won't silently mount a temporary volume.
   ignore_image_defined_volumes = false
+
+  # netns_mounts_under_state_dir places all mounts for network namespaces under StateDir/netns
+  # instead of being placed under the hardcoded directory /var/run/netns. Changing this setting
+  # requires that all containers are deleted.
+  netns_mounts_under_state_dir = false
 
   # 'plugins."io.containerd.grpc.v1.cri".x509_key_pair_streaming' contains a x509 valid key pair to stream with tls.
   [plugins."io.containerd.grpc.v1.cri".x509_key_pair_streaming]
@@ -92,8 +97,14 @@ version = 2
   # when using containerd with Kubernetes <=1.11.
   disable_proc_mount = false
 
-  # unsetSeccompProfile is the profile containerd/cri will use if the provided seccomp profile is
-  # unset (`""`) for a container (default is `unconfined`)
+  # unset_seccomp_profile is the seccomp profile containerd/cri will use if the seccomp
+  # profile requested over CRI is unset (or nil) for a pod/container (otherwise if this field is not set the
+  # default unset profile will map to `unconfined`)
+    # Note: The default unset seccomp profile should not be confused with the seccomp profile
+    # used in CRI when the runtime default seccomp profile is requested. In the later case, the
+    # default is set by the following code (https://github.com/containerd/containerd/blob/master/contrib/seccomp/seccomp_default.go).
+    # To summarize, there are two different seccomp defaults, the unset default used when the CRI request is
+    # set to nil or `unconfined`, and the default used when the runtime default seccomp profile is requested.
   unset_seccomp_profile = ""
 
   # 'plugins."io.containerd.grpc.v1.cri".containerd' contains config related to containerd
@@ -162,7 +173,7 @@ version = 2
       # base_runtime_spec is a file path to a JSON file with the OCI spec that will be used as the base spec that all
       # container's are created from.
       # Use containerd's `ctr oci spec > /etc/containerd/cri-base.json` to output initial spec file.
-      # Spec files are loaded at launch, so containerd daemon must be restared on any changes to refresh default specs.
+      # Spec files are loaded at launch, so containerd daemon must be restarted on any changes to refresh default specs.
       # Still running containers and restarted containers will still be using the original spec from which that container was created.
       base_runtime_spec = ""
 
@@ -230,18 +241,6 @@ version = 2
     # See the "CNI Config Template" section for more details.
     conf_template = ""
 
-  # 'plugins."io.containerd.grpc.v1.cri".registry' contains config related to the registry
-  [plugins."io.containerd.grpc.v1.cri".registry]
-
-    # 'plugins."io.containerd.grpc.v1.cri.registry.headers sets the http request headers to send for all registry requests
-    [plugins."io.containerd.grpc.v1.cri".registry.headers]
-        Foo = ["bar"]
-
-    # 'plugins."io.containerd.grpc.v1.cri".registry.mirrors' are namespace to mirror mapping for all namespaces.
-    [plugins."io.containerd.grpc.v1.cri".registry.mirrors]
-      [plugins."io.containerd.grpc.v1.cri".registry.mirrors."docker.io"]
-        endpoint = ["https://registry-1.docker.io", ]
-
   # 'plugins."io.containerd.grpc.v1.cri".image_decryption' contains config related
   # to handling decryption of encrypted container images.
   [plugins."io.containerd.grpc.v1.cri".image_decryption]
@@ -263,6 +262,41 @@ version = 2
     # * Stream processors: https://github.com/containerd/containerd/blob/master/docs/stream_processors.md
     # * Containerd imgcrypt: https://github.com/containerd/imgcrypt
     key_model = "node"
+
+  # 'plugins."io.containerd.grpc.v1.cri".registry' contains config related to
+  # the registry
+  [plugins."io.containerd.grpc.v1.cri".registry]
+    # config_path specifies a directory to look for the registry hosts configuration.
+    #
+    # The cri plugin will look for and use config_path/host-namespace/hosts.toml
+    #   configs if present OR load certificate files as laid out in the Docker/Moby
+    #   specific layout https://docs.docker.com/engine/security/certificates/
+    #
+    # If config_path is not provided defaults are used.
+    #
+    # *** registry.configs and registry.mirrors that were a part of containerd 1.4
+    # are now DEPRECATED and will only be used if the config_path is not specified.
+    config_path = ""
+```
+
+## Registry Configuration
+
+Here is a simple example for a default registry hosts configuration. Set
+`config_path = "/etc/containerd/certs.d"` in your config.toml for containerd.
+Make a directory tree at the config path that includes `docker.io` as a directory
+representing the host namespace to be configured. Then add a `hosts.toml` file
+in the `docker.io` to configure the host namespace. It should look like this:
+```
+$ tree /etc/containerd/certs.d
+/etc/containerd/certs.d
+└── docker.io
+    └── hosts.toml
+
+$ cat /etc/containerd/certs.d/docker.io/hosts.toml
+server = "https://docker.io"
+
+[host."https://registry-1.docker.io"]
+  capabilities = ["pull", "resolve"]
 ```
 
 ## Untrusted Workload
@@ -293,7 +327,7 @@ values are:
 * `.PodCIDR` is a string of the first CIDR assigned to the node.
 * `.PodCIDRRanges` is a string array of all CIDRs assigned to the node. It is
   usually used for
-  [dualstack](https://github.com/kubernetes/enhancements/blob/master/keps/sig-network/20180612-ipv4-ipv6-dual-stack.md) support.
+  [dualstack](https://github.com/kubernetes/enhancements/tree/master/keps/sig-network/563-dual-stack) support.
 * `.Routes` is a string array of all routes needed. It is usually used for
   dualstack support or single stack but IPv4 or IPv6 is decided at runtime.
 

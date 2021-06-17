@@ -21,13 +21,12 @@ package command
 import (
 	"context"
 	"os"
+	"path/filepath"
 
 	"github.com/containerd/containerd/log"
 	"github.com/containerd/containerd/services/server"
 	"golang.org/x/sys/unix"
 )
-
-const defaultConfigPath = "/etc/containerd/config.toml"
 
 var handledSignals = []os.Signal{
 	unix.SIGTERM,
@@ -73,4 +72,8 @@ func handleSignals(ctx context.Context, signals chan os.Signal, serverC chan *se
 		}
 	}()
 	return done
+}
+
+func isLocalAddress(path string) bool {
+	return filepath.IsAbs(path)
 }

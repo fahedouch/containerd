@@ -136,8 +136,12 @@ func testUsage(t *testing.T, snapshotter snapshots.Snapshotter) {
 	assert.NilError(t, err)
 
 	// Should be at least 1 MB + fs metadata
-	assert.Check(t, layer2Usage.Size > sizeBytes,
+	assert.Check(t, layer2Usage.Size >= sizeBytes,
 		"%d > %d", layer2Usage.Size, sizeBytes)
-	assert.Check(t, layer2Usage.Size < sizeBytes+256*dmsetup.SectorSize,
-		"%d < %d", layer2Usage.Size, sizeBytes+256*dmsetup.SectorSize)
+}
+
+func TestMkfs(t *testing.T) {
+	ctx := context.Background()
+	err := mkfs(ctx, "")
+	assert.ErrorContains(t, err, `mkfs.ext4 couldn't initialize ""`)
 }

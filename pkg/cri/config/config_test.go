@@ -113,7 +113,7 @@ func TestValidateConfig(t *testing.T) {
 					DefaultRuntimeName: RuntimeDefault,
 				},
 			},
-			expectedErr: "no corresponding runtime configured in `runtimes` for `default_runtime_name`",
+			expectedErr: "no corresponding runtime configured in `containerd.runtimes` for `containerd` `default_runtime_name = \"default\"",
 		},
 		"deprecated systemd_cgroup for v1 runtime": {
 			config: &PluginConfig{
@@ -319,6 +319,46 @@ func TestValidateConfig(t *testing.T) {
 				},
 			},
 			expectedErr: "invalid stream idle timeout",
+		},
+		"conflicting mirror registry config": {
+			config: &PluginConfig{
+				ContainerdConfig: ContainerdConfig{
+					DefaultRuntimeName: RuntimeDefault,
+					Runtimes: map[string]Runtime{
+						RuntimeDefault: {
+							Type: "default",
+						},
+					},
+				},
+				Registry: Registry{
+					ConfigPath: "/etc/containerd/conf.d",
+					Mirrors: map[string]Mirror{
+						"something.io": {},
+					},
+				},
+			},
+			expectedErr: "`mirrors` cannot be set when `config_path` is provided",
+		},
+		"conflicting tls registry config": {
+			config: &PluginConfig{
+				ContainerdConfig: ContainerdConfig{
+					DefaultRuntimeName: RuntimeDefault,
+					Runtimes: map[string]Runtime{
+						RuntimeDefault: {
+							Type: "default",
+						},
+					},
+				},
+				Registry: Registry{
+					ConfigPath: "/etc/containerd/conf.d",
+					Configs: map[string]RegistryConfig{
+						"something.io": {
+							TLS: &TLSConfig{},
+						},
+					},
+				},
+			},
+			expectedErr: "`configs.tls` cannot be set when `config_path` is provided",
 		},
 	} {
 		t.Run(desc, func(t *testing.T) {

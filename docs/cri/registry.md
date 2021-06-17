@@ -2,9 +2,13 @@
 
 This document describes the method to configure the image registry for `containerd` for use with the `cri` plugin.
 
-NOTE: The configuration syntax used in this doc is in version 2 which is the
-recommended since `containerd` 1.3. If your configuration is still in version 1,
-you can replace `"io.containerd.grpc.v1.cri"` with `cri`.
+*** registry.mirrors and registry.configs as described in this document
+have been DEPRECATED. As described in [the cri config](./config.md#registry-configuration) you
+should now use the form
+```toml
+[plugins."io.containerd.grpc.v1.cri".registry]
+   config_path = "/etc/containerd/certs.d"
+```
 
 ## Configure Registry Endpoint
 
@@ -185,3 +189,7 @@ DEBU[0000] PullImageRequest: &PullImageRequest{Image:&ImageSpec{Image:gcr.io/you
 DEBU[0001] PullImageResponse: &PullImageResponse{ImageRef:sha256:78096d0a54788961ca68393e5f8038704b97d8af374249dc5c8faec1b8045e42,}
 Image is up to date for sha256:78096d0a54788961ca68393e5f8038704b97d8af374249dc5c8faec1b8045e42
 ```
+
+---
+
+NOTE: The configuration syntax used in this doc is in version 2 which is the recommended since `containerd` 1.3. For the previous config format you can reference [https://github.com/containerd/cri/blob/release/1.2/docs/registry.md](https://github.com/containerd/cri/blob/release/1.2/docs/registry.md).

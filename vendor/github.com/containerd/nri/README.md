@@ -1,5 +1,10 @@
 # nri - Node Resource Interface
 
+[![PkgGoDev](https://pkg.go.dev/badge/github.com/containerd/nri)](https://pkg.go.dev/github.com/containerd/nri)
+[![Build Status](https://github.com/containerd/nri/workflows/CI/badge.svg)](https://github.com/containerd/nri/actions?query=workflow%3ACI)
+[![codecov](https://codecov.io/gh/containerd/nri/branch/master/graph/badge.svg)](https://codecov.io/gh/containerd/nri)
+[![Go Report Card](https://goreportcard.com/badge/github.com/containerd/nri)](https://goreportcard.com/report/github.com/containerd/nri)
+
 *This project is currently in DRAFT status*
 
 This project is a WIP for a new, CNI like, interface for managing resources on a node for Pods and Containers.
@@ -33,18 +38,18 @@ The config's default location will be `/etc/nri/resource.d/*.conf`.
 
 ```json
 {
-        "version": "0.1",
-        "plugins": [
-                {
-                        "type": "konfine",
-                        "conf": {
-                                "systemReserved": [0,1]
-                        }
-                },
-                {
-                        "type": "clearcfs"
-                }
-        ]
+  "version": "0.1",
+  "plugins": [
+    {
+      "type": "konfine",
+      "conf": {
+        "systemReserved": [0, 1]
+      }
+    },
+    {
+      "type": "clearcfs"
+    }
+  ]
 }
 ```
 
@@ -54,23 +59,22 @@ Input to a plugin is provided via `STDIN` as a `json` payload.
 
 ```json
 {
-	"version": "0.1",
-	"state": "create",
-	"id": "redis",
-	"pid": 1234,
-	"spec": {
-		"resources": {
-		},
-		"cgroupsPath": "default/redis",
-		"namespaces": {
-			"pid": "/proc/44/ns/pid",
-			"mount": "/proc/44/ns/mnt",
-			"net": "/proc/44/ns/net",
-		},
-		"annotations": {
-			"qos.class: "ls"
-		}
-	}
+  "version": "0.1",
+  "state": "create",
+  "id": "redis",
+  "pid": 1234,
+  "spec": {
+    "resources": {},
+    "cgroupsPath": "default/redis",
+    "namespaces": {
+      "pid": "/proc/44/ns/pid",
+      "mount": "/proc/44/ns/mnt",
+      "net": "/proc/44/ns/net"
+    },
+    "annotations": {
+      "qos.class": "ls"
+    }
+  }
 }
 ```
 
@@ -78,11 +82,11 @@ Input to a plugin is provided via `STDIN` as a `json` payload.
 
 ```json
 {
-	"version": "0.1",
-	"state": "create",
-	"id": "redis",
-	"pid": 1234,
-    "cgroupsPath": "qos-ls/default/redis"
+  "version": "0.1",
+  "state": "create",
+  "id": "redis",
+  "pid": 1234,
+  "cgroupsPath": "qos-ls/default/redis"
 }
 ```
 

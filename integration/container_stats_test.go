@@ -1,5 +1,3 @@
-// +build linux
-
 /*
    Copyright The containerd Authors.
 
@@ -20,6 +18,7 @@ package integration
 
 import (
 	"fmt"
+	goruntime "runtime"
 	"testing"
 	"time"
 
@@ -39,6 +38,9 @@ func TestContainerStats(t *testing.T) {
 		assert.NoError(t, runtimeService.StopPodSandbox(sb))
 		assert.NoError(t, runtimeService.RemovePodSandbox(sb))
 	}()
+
+	EnsureImageExists(t, pauseImage)
+
 	t.Logf("Create a container config and run container in a pod")
 	containerConfig := ContainerConfig(
 		"container1",
@@ -63,8 +65,7 @@ func TestContainerStats(t *testing.T) {
 		if err != nil {
 			return false, err
 		}
-		if s.GetWritableLayer().GetUsedBytes().GetValue() != 0 &&
-			s.GetWritableLayer().GetInodesUsed().GetValue() != 0 {
+		if s.GetWritableLayer().GetUsedBytes().GetValue() != 0 {
 			return true, nil
 		}
 		return false, nil
@@ -72,6 +73,83 @@ func TestContainerStats(t *testing.T) {
 
 	t.Logf("Verify stats received for container %q", cn)
 	testStats(t, s, containerConfig)
+}
+
+// Test to verify if the consumed stats are correct.
+func TestContainerConsumedStats(t *testing.T) {
+	t.Logf("Create a pod config and run sandbox container")
+	sbConfig := PodSandboxConfig("sandbox1", "stats")
+	sb, err := runtimeService.RunPodSandbox(sbConfig, *runtimeHandler)
+	require.NoError(t, err)
+	defer func() {
+		assert.NoError(t, runtimeService.StopPodSandbox(sb))
+		assert.NoError(t, runtimeService.RemovePodSandbox(sb))
+	}()
+
+	testImage := GetImage(ResourceConsumer)
+	img, err := imageService.PullImage(&runtime.ImageSpec{Image: testImage}, nil, sbConfig)
+	require.NoError(t, err)
+	defer func() {
+		assert.NoError(t, imageService.RemoveImage(&runtime.ImageSpec{Image: img}))
+	}()
+
+	t.Logf("Create a container config and run container in a pod")
+	containerConfig := ContainerConfig(
+		"container1",
+		testImage,
+		WithTestLabels(),
+		WithTestAnnotations(),
+	)
+	cn, err := runtimeService.CreateContainer(sb, containerConfig, sbConfig)
+	require.NoError(t, err)
+	defer func() {
+		assert.NoError(t, runtimeService.RemoveContainer(cn))
+	}()
+	require.NoError(t, runtimeService.StartContainer(cn))
+	defer func() {
+		assert.NoError(t, runtimeService.StopContainer(cn, 10))
+	}()
+
+	t.Logf("Fetch initial stats for container")
+	var s *runtime.ContainerStats
+	require.NoError(t, Eventually(func() (bool, error) {
+		s, err = runtimeService.ContainerStats(cn)
+		if err != nil {
+			return false, err
+		}
+		if s.GetMemory().GetWorkingSetBytes().GetValue() > 0 {
+			return true, nil
+		}
+		return false, nil
+	}, time.Second, 30*time.Second))
+
+	initialMemory := s.GetMemory().GetWorkingSetBytes().GetValue()
+	t.Logf("Initial container memory consumption is %f MB. Consume 100 MB and expect the reported stats to increase accordingly", float64(initialMemory)/(1024*1024))
+
+	// consume 100 MB memory for 30 seconds.
+	var command []string
+	if goruntime.GOOS == "windows" {
+		// -d: Leak and touch memory in specified MBs
+		// -c: Count of number of objects to allocate
+		command = []string{"testlimit.exe", "-accepteula", "-d", "25", "-c", "4"}
+	} else {
+		command = []string{"stress", "-m", "1", "--vm-bytes", "100M", "--vm-hang", "0", "-t", "30"}
+	}
+
+	go func() {
+		_, _, err = runtimeService.ExecSync(cn, command, 30*time.Second)
+	}()
+
+	require.NoError(t, Eventually(func() (bool, error) {
+		s, err = runtimeService.ContainerStats(cn)
+		if err != nil {
+			return false, err
+		}
+		if s.GetMemory().GetWorkingSetBytes().GetValue() > initialMemory+100*1024*1024 {
+			return true, nil
+		}
+		return false, nil
+	}, time.Second, 30*time.Second))
 }
 
 // Test to verify filtering without any filter
@@ -84,6 +162,9 @@ func TestContainerListStats(t *testing.T) {
 		assert.NoError(t, runtimeService.StopPodSandbox(sb))
 		assert.NoError(t, runtimeService.RemovePodSandbox(sb))
 	}()
+
+	EnsureImageExists(t, pauseImage)
+
 	t.Logf("Create a container config and run containers in a pod")
 	containerConfigMap := make(map[string]*runtime.ContainerConfig)
 	for i := 0; i < 3; i++ {
@@ -114,8 +195,7 @@ func TestContainerListStats(t *testing.T) {
 			return false, err
 		}
 		for _, s := range stats {
-			if s.GetWritableLayer().GetUsedBytes().GetValue() == 0 &&
-				s.GetWritableLayer().GetInodesUsed().GetValue() == 0 {
+			if s.GetWritableLayer().GetUsedBytes().GetValue() == 0 {
 				return false, nil
 			}
 		}
@@ -139,6 +219,9 @@ func TestContainerListStatsWithIdFilter(t *testing.T) {
 		assert.NoError(t, runtimeService.StopPodSandbox(sb))
 		assert.NoError(t, runtimeService.RemovePodSandbox(sb))
 	}()
+
+	EnsureImageExists(t, pauseImage)
+
 	t.Logf("Create a container config and run containers in a pod")
 	containerConfigMap := make(map[string]*runtime.ContainerConfig)
 	for i := 0; i < 3; i++ {
@@ -173,8 +256,7 @@ func TestContainerListStatsWithIdFilter(t *testing.T) {
 			if len(stats) != 1 {
 				return false, errors.New("unexpected stats length")
 			}
-			if stats[0].GetWritableLayer().GetUsedBytes().GetValue() != 0 &&
-				stats[0].GetWritableLayer().GetInodesUsed().GetValue() != 0 {
+			if stats[0].GetWritableLayer().GetUsedBytes().GetValue() != 0 {
 				return true, nil
 			}
 			return false, nil
@@ -199,6 +281,9 @@ func TestContainerListStatsWithSandboxIdFilter(t *testing.T) {
 		assert.NoError(t, runtimeService.StopPodSandbox(sb))
 		assert.NoError(t, runtimeService.RemovePodSandbox(sb))
 	}()
+
+	EnsureImageExists(t, pauseImage)
+
 	t.Logf("Create a container config and run containers in a pod")
 	containerConfigMap := make(map[string]*runtime.ContainerConfig)
 	for i := 0; i < 3; i++ {
@@ -232,12 +317,12 @@ func TestContainerListStatsWithSandboxIdFilter(t *testing.T) {
 		if len(stats) != 3 {
 			return false, errors.New("unexpected stats length")
 		}
-		if stats[0].GetWritableLayer().GetUsedBytes().GetValue() != 0 &&
-			stats[0].GetWritableLayer().GetInodesUsed().GetValue() != 0 {
+		if stats[0].GetWritableLayer().GetUsedBytes().GetValue() != 0 {
 			return true, nil
 		}
 		return false, nil
-	}, time.Second, 30*time.Second))
+	}, time.Second, 45*time.Second))
+	// TODO(claudiub): Reduce the timer above to 30 seconds once Windows flakiness has been addressed.
 	t.Logf("Verify container stats for sandbox %q", sb)
 	for _, s := range stats {
 		testStats(t, s, containerConfigMap[s.GetAttributes().GetId()])
@@ -255,6 +340,9 @@ func TestContainerListStatsWithIdSandboxIdFilter(t *testing.T) {
 		assert.NoError(t, runtimeService.StopPodSandbox(sb))
 		assert.NoError(t, runtimeService.RemovePodSandbox(sb))
 	}()
+
+	EnsureImageExists(t, pauseImage)
+
 	t.Logf("Create container config and run containers in a pod")
 	containerConfigMap := make(map[string]*runtime.ContainerConfig)
 	for i := 0; i < 3; i++ {
@@ -288,8 +376,7 @@ func TestContainerListStatsWithIdSandboxIdFilter(t *testing.T) {
 			if len(stats) != 1 {
 				return false, errors.New("unexpected stats length")
 			}
-			if stats[0].GetWritableLayer().GetUsedBytes().GetValue() != 0 &&
-				stats[0].GetWritableLayer().GetInodesUsed().GetValue() != 0 {
+			if stats[0].GetWritableLayer().GetUsedBytes().GetValue() != 0 {
 				return true, nil
 			}
 			return false, nil
@@ -311,8 +398,7 @@ func TestContainerListStatsWithIdSandboxIdFilter(t *testing.T) {
 			if len(stats) != 1 {
 				return false, errors.New("unexpected stats length")
 			}
-			if stats[0].GetWritableLayer().GetUsedBytes().GetValue() != 0 &&
-				stats[0].GetWritableLayer().GetInodesUsed().GetValue() != 0 {
+			if stats[0].GetWritableLayer().GetUsedBytes().GetValue() != 0 {
 				return true, nil
 			}
 			return false, nil
@@ -343,5 +429,9 @@ func testStats(t *testing.T,
 	require.NotEmpty(t, s.GetWritableLayer().GetTimestamp())
 	require.NotEmpty(t, s.GetWritableLayer().GetFsId().GetMountpoint())
 	require.NotEmpty(t, s.GetWritableLayer().GetUsedBytes().GetValue())
-	require.NotEmpty(t, s.GetWritableLayer().GetInodesUsed().GetValue())
+
+	// Windows does not collect inodes stats.
+	if goruntime.GOOS != "windows" {
+		require.NotEmpty(t, s.GetWritableLayer().GetInodesUsed().GetValue())
+	}
 }
