@@ -275,7 +275,7 @@ func (c *criService) collectContainerMetrics(ctx context.Context, container cont
 			Timestamp:   timestamp,
 			MetricType:  runtime.MetricType_GAUGE,
 			LabelValues: containerLabels,
-			Value:       &runtime.UInt64Value{Value: uint64(container.Status.Get().StartedAt)},
+			Value:       &runtime.UInt64Value{Value: uint64(container.Status.Get().StartedAt / int64(time.Second))},
 		},
 	}...)
 
@@ -815,6 +815,13 @@ func (c *criService) extractProcessMetrics(ctx context.Context, task containerd.
 					MetricType:  runtime.MetricType_GAUGE,
 					LabelValues: labels,
 					Value:       &runtime.UInt64Value{Value: s.Pids.Limit},
+				},
+				{
+					Name:        containerThreads.Name,
+					Timestamp:   timestamp,
+					MetricType:  runtime.MetricType_GAUGE,
+					LabelValues: labels,
+					Value:       &runtime.UInt64Value{Value: s.Pids.Current},
 				},
 			}...)
 		}

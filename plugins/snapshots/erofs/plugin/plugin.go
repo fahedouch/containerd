@@ -28,6 +28,7 @@ import (
 	"github.com/containerd/containerd/v2/plugins"
 	"github.com/containerd/containerd/v2/plugins/snapshots/erofs"
 	"github.com/docker/go-units"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
 const (
@@ -57,14 +58,28 @@ type Config struct {
 	// Linux only
 	DmverityMode string `toml:"dmverity_mode"`
 
-	// LayerContentCache is a directory of pre-converted, diffID-keyed erofs
-	// layer blobs. When set, layers already present in the cache are committed
-	// without being downloaded or converted. Empty disables the feature.
+	// LayerContentCaches lists directories of pre-converted, diffID-keyed erofs
+	// layer blobs. Each is checked one by one and the first hit is used instead
+	// of downloading and converting the layer; a directory that doesn't exist is
+	// treated as a cache miss. Layers missing from all of them are converted
+	// normally.
 	//
 	// Only layers prepared without a parent can be served from the cache. With
 	// sequential unpacking that is the first layer alone, so getting hits for a
 	// whole image needs max_concurrent_unpacks > 1, which is not the default.
-	LayerContentCache string `toml:"layer_content_cache"`
+	LayerContentCaches []string `toml:"layer_content_caches"`
+}
+
+// snapshotterPlatforms returns the platforms this snapshotter advertises: the
+// default platform, plus the "erofs" OS feature platform (see the EROFS image
+// layer format specification, https://github.com/erofs/erofs-image-spec) so
+// that clients pulling with --snapshotter erofs prefer the native EROFS image
+// variant when one is available in a multi-platform index.
+func snapshotterPlatforms() []ocispec.Platform {
+	erofsPlatform := platforms.DefaultSpec()
+	result := []ocispec.Platform{erofsPlatform}
+	erofsPlatform.OSFeatures = []string{"erofs"}
+	return append(result, erofsPlatform)
 }
 
 func init() {
@@ -73,7 +88,7 @@ func init() {
 		ID:     "erofs",
 		Config: &Config{},
 		InitFn: func(ic *plugin.InitContext) (any, error) {
-			ic.Meta.Platforms = append(ic.Meta.Platforms, platforms.DefaultSpec())
+			ic.Meta.Platforms = append(ic.Meta.Platforms, snapshotterPlatforms()...)
 
 			config, ok := ic.Config.(*Config)
 			if !ok {
@@ -110,8 +125,8 @@ func init() {
 				opts = append(opts, erofs.WithDmverityMode(config.DmverityMode))
 			}
 
-			if config.LayerContentCache != "" {
-				opts = append(opts, erofs.WithLayerContentCache(config.LayerContentCache))
+			if len(config.LayerContentCaches) > 0 {
+				opts = append(opts, erofs.WithLayerContentCaches(config.LayerContentCaches...))
 			}
 
 			// Don't bother supporting overlay's slow_chown, only RemapIDs
